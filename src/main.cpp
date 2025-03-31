@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoOTA.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <ESP8266WiFi.h>
@@ -329,6 +330,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 }
 
+unsigned long lastTempPublishTime = 0; // Змінна для збереження часу останньої публікації
+const unsigned long tempPublishInterval = 1000; // Інтервал публікації (1 секунда)
+
 void setup() {
     // Ініціалізація серійного монітора
     Serial.begin(9600);
@@ -362,13 +366,25 @@ void setup() {
     mqtt.subscribe("home/set/boy_on/mode/nasos");
     mqtt.subscribe("home/set/heat_on/mode/nasos");
     mqtt.subscribe("home/set/heat_on/setpoint-gisteresis/get");
+    ArduinoOTA.setHostname("ESP_termostat"); // Задаем имя сетевого порта
+  ArduinoOTA.begin();
 }
 
 void loop() {
+    ArduinoOTA.handle(); // Всегда готовы к прошивке
     // Перевірка, чи настав час для нового вимірювання
     if (tempSensor.isTimeToMeasure()) {
         // Оновлення логіки
         logic.update(modeSetHeat, modeNasosHeat, modeNasosBoy, tempSetpoint);
+    }
+
+    // Публікація поточної температури кожну секунду
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastTempPublishTime >= tempPublishInterval) {
+        lastTempPublishTime = currentMillis;
+        float currentTemp = tempSensor.getTemperature();
+        mqtt.publish(mqtt.getTempInTopic(), String(currentTemp).c_str());
+        Serial.println("Published current temperature: " + String(currentTemp));
     }
 
     // Обробка MQTT
