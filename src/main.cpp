@@ -239,15 +239,11 @@ public:
     void update(bool modeSetHeat, bool modeNasosHeat, bool modeNasosBoy, float tempSetpoint) {
         float currentTemp = tempSensor.getTemperature();
 
-        // Якщо modeNasosBoy увімкнений, реле завжди увімкнене
-        if (modeNasosBoy) {
-            relay.on();
-            Serial.println("Relay ON: modeNasosBoy is active.");
-            return;
-        }
+        
+        
 
         // Логіка для modeSetHeat і modeNasosHeat
-        if (modeSetHeat && modeNasosHeat) {
+        if (modeNasosHeat) {
             if (currentTemp <= (tempSetpoint - hysteresis)) {
                 relay.on();
                 Serial.println("Relay ON: Heating mode active and temperature below setpoint with hysteresis.");
@@ -255,6 +251,12 @@ public:
                 relay.off();
                 Serial.println("Relay OFF: Temperature reached setpoint.");
             }
+            // Якщо modeNasosBoy увімкнений, реле завжди увімкнене
+            if (modeNasosBoy) {
+            relay.on();
+            Serial.println("Relay ON: modeNasosBoy is active.");
+            return;
+        }
         } else {
             relay.off();
             Serial.println("Relay OFF: Heating mode or pump mode is inactive.");
