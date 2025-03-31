@@ -272,8 +272,8 @@ const char* WIFI_SSID = "aonline";
 const char* WIFI_PASSWORD = "1qaz2wsx3edc";
 
 // Піни для підключення
-#define ONE_WIRE_BUS D2
-#define RELAY_PIN D5
+#define ONE_WIRE_BUS 0
+#define RELAY_PIN 5
 
 // Створення об'єктів
 TemperatureSensor tempSensor(ONE_WIRE_BUS, 1000);
