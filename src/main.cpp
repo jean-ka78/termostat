@@ -237,10 +237,10 @@ public:
 
     // Основна логіка
     void update(bool modeSetHeat, bool modeNasosHeat, bool modeNasosBoy, float tempSetpoint) {
-        float currentTemp = tempSensor.getTemperature();
+        Serial.println("LogicController::update called");
+        Serial.println("modeNasosBoy: " + String(modeNasosBoy));
 
-        
-        
+        float currentTemp = tempSensor.getTemperature();
 
         // Логіка для modeSetHeat і modeNasosHeat
         if (modeNasosHeat) {
@@ -252,12 +252,14 @@ public:
                 Serial.println("Relay OFF: Temperature reached setpoint.");
             }
             // Якщо modeNasosBoy увімкнений, реле завжди увімкнене
-            if (modeNasosBoy) {
+         
+        }else    if (modeNasosBoy) {
             relay.on();
             Serial.println("Relay ON: modeNasosBoy is active.");
             return;
         }
-        } else {
+        
+         else {
             relay.off();
             Serial.println("Relay OFF: Heating mode or pump mode is inactive.");
         }
@@ -287,10 +289,12 @@ LogicController logic(relay, tempSensor, 0.5); // 0.5 — значення гі�
 
 // Обробник вхідних MQTT-повідомлень
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
+    payload[length] = '\0';
+    String message = (char*)payload;
+
+    // Serial.println("Received message:");
+    // Serial.println("Topic: " + String(topic));
+    // Serial.println("Message: " + message);
 
     if (strcmp(topic, "home/set/heat_on/mode/set") == 0) {
         if (message == "heat") {
@@ -329,6 +333,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         EEPROM.put(EEPROM_ADDR_HYSTERESIS, hysteresis);
         EEPROM.commit();
         Serial.println("Hysteresis updated: " + String(hysteresis));
+    } else {
+        Serial.println("Unknown topic received.");
     }
 }
 
@@ -361,15 +367,17 @@ void setup() {
     relay.begin();
     wifi.connect();
     mqtt.begin();
-    mqtt.setCallback(mqttCallback);
+    
     mqtt.connect();
-    mqtt.subscribe("home/set/heat_on/mode/set");
-    mqtt.subscribe("home/set/heat_on/setpoint-temperature/get");
-    mqtt.subscribe("home/set/boy_on/mode/nasos");
-    mqtt.subscribe("home/set/heat_on/mode/nasos");
-    mqtt.subscribe("home/set/heat_on/setpoint-gisteresis/get");
+    mqtt.subscribe("home/set/#");
+    mqtt.setCallback(mqttCallback);
+    // mqtt.subscribe("home/set/heat_on/mode/set");
+    // mqtt.subscribe("home/set/heat_on/setpoint-temperature/get");
+    // mqtt.subscribe("home/set/boy_on/mode/nasos");
+    // mqtt.subscribe("home/set/heat_on/mode/nasos");
+    // mqtt.subscribe("home/set/heat_on/setpoint-gisteresis/get");
     ArduinoOTA.setHostname("ESP_termostat"); // Задаем имя сетевого порта
-  ArduinoOTA.begin();
+    ArduinoOTA.begin();
 }
 
 void loop() {
