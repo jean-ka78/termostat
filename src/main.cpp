@@ -22,6 +22,14 @@ float tempSetpoint = 0.0;
 bool modeNasosBoy = false;
 bool modeNasosHeat = false;
 float hysteresis = 0.5; // Значення за замовчуванням
+float smoothedValue = 0;     // Поточне згладжене значення
+
+// Константи для MQTT топіків
+const char* TOPIC_MODE_SET_HEAT = "home/set/heat_on/mode/set";
+const char* TOPIC_TEMP_SETPOINT = "home/set/heat_on/setpoint-temperature/get";
+const char* TOPIC_MODE_NASOS_BOY = "home/set/boy_on/mode/nasos";
+const char* TOPIC_MODE_NASOS_HEAT = "home/set/heat_on/mode/nasos";
+const char* TOPIC_HYSTERESIS = "home/set/heat_on/setpoint-gisteresis/get";
 
 // Клас для роботи з сенсором DS18B20
 class TemperatureSensor {
@@ -30,7 +38,7 @@ private:
     DallasTemperature sensors;
     unsigned long measurementInterval;
     unsigned long previousMillis;
-
+    
 public:
     // Конструктор
     TemperatureSensor(uint8_t pin, unsigned long interval)
@@ -54,7 +62,20 @@ public:
     // Отримання температури
     float getTemperature() {
         sensors.requestTemperatures();
-        return sensors.getTempCByIndex(0);
+        float tempC = sensors.getTempCByIndex(0);
+  smoothedValue = tempC;
+  smoothedValue = 0.9 * smoothedValue + 0.1 * tempC;
+  // Check if reading was successful
+  if (tempC != DEVICE_DISCONNECTED_C)
+  {
+    // Serial.print("Temperature for the device 1 (index 0) is: ");
+    // Serial.println(tempC);
+  }
+  else
+  {
+    Serial.println("Error: Could not read temperature data");
+  }
+  return smoothedValue;
     }
 };
 
@@ -73,12 +94,6 @@ private:
     const char* HUM_IN = "home/esp-12f/current-humidity";
     const char* ESP_IP = "home/esp-12f/ip";
     const char* RELLAY = "home/esp-12f/heater";
-    
-    const char* MODE_GET_TOPIC_HEAT = "home/heat_on/mode/get";
-    const char* MODE_SET_TOPIC_HEAT = "home/set/heat_on/mode/set";
-    const char* TEMP_SETPOINT_GET = "home/set/heat_on/setpoint-temperature/get";
-    const char* MODE_GET_NASOS_BOY = "home/set/boy_on/mode/nasos";
-    const char* MODE_GET_NASOS_HEAT = "home/set/heat_on/mode/nasos";
 
 public:
     // Конструктор
@@ -98,11 +113,7 @@ public:
                 Serial.println("connected");
 
                 // Підписка на необхідні топіки
-                client.subscribe(MODE_SET_TOPIC_HEAT);
-                client.subscribe(MODE_GET_TOPIC_HEAT);
-                client.subscribe(TEMP_SETPOINT_GET);
-                client.subscribe(MODE_GET_NASOS_BOY);
-                client.subscribe(MODE_GET_NASOS_HEAT);
+                client.subscribe("home/set/#");
                 Serial.println("Subscribed to topics.");
             } else {
                 Serial.print("failed, rc=");
@@ -110,6 +121,12 @@ public:
                 Serial.println(" try again in 5 seconds");
                 delay(5000);
             }
+        }
+    }
+    void reconnectIfNeeded() {
+        if (!client.connected()) {
+            Serial.println("MQTT disconnected. Trying to reconnect...");
+            connect(); // Вже є метод connect(), який виконує підписку та логін
         }
     }
 
@@ -216,6 +233,23 @@ public:
         Serial.print("IP address: ");
         Serial.println(WiFi.localIP());
     }
+    void reconnectIfNeeded() {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi disconnected. Reconnecting...");
+            WiFi.disconnect();
+            WiFi.begin(ssid, password);
+            unsigned long startAttemptTime = millis();
+            while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+                delay(500);
+                Serial.print(".");
+            }
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("\nWiFi reconnected!");
+            } else {
+                Serial.println("\nFailed to reconnect to WiFi.");
+            }
+        }
+    }
 
     // Перевірка підключення до Wi-Fi
     bool isConnected() {
@@ -251,15 +285,11 @@ public:
                 relay.off();
                 Serial.println("Relay OFF: Temperature reached setpoint.");
             }
-            // Якщо modeNasosBoy увімкнений, реле завжди увімкнене
-         
-        }else    if (modeNasosBoy) {
+        } else if (modeNasosBoy) {
             relay.on();
             Serial.println("Relay ON: modeNasosBoy is active.");
             return;
-        }
-        
-         else {
+        } else {
             relay.off();
             Serial.println("Relay OFF: Heating mode or pump mode is inactive.");
         }
@@ -287,59 +317,46 @@ MQTTConnection mqtt(mqtt_server, mqtt_port, mqtt_user, mqtt_pass);
 Relay relay(RELAY_PIN, mqtt);
 LogicController logic(relay, tempSensor, 0.5); // 0.5 — значення гістерезису
 
+// Функція для оновлення EEPROM
+template <typename T>
+void updateEEPROM(int address, const T& value) {
+    EEPROM.put(address, value);
+    EEPROM.commit();
+}
+
 // Обробник вхідних MQTT-повідомлень
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     payload[length] = '\0';
     String message = (char*)payload;
 
-    // Serial.println("Received message:");
-    // Serial.println("Topic: " + String(topic));
-    // Serial.println("Message: " + message);
+    Serial.println("Received MQTT message:");
+    Serial.println("Topic: " + String(topic));
+    Serial.println("Message: " + message);
 
-    if (strcmp(topic, "home/set/heat_on/mode/set") == 0) {
-        if (message == "heat") {
-            modeSetHeat = true;
-        } else if (message == "off") {
-            modeSetHeat = false;
-        }
-        EEPROM.put(EEPROM_ADDR_MODE_SET_HEAT, modeSetHeat);
-        EEPROM.commit();
+    if (strcmp(topic, TOPIC_MODE_SET_HEAT) == 0) {
+        modeSetHeat = (message == "heat");
+        updateEEPROM(EEPROM_ADDR_MODE_SET_HEAT, modeSetHeat);
         Serial.println("Mode Set Heat updated: " + String(modeSetHeat));
-    } else if (strcmp(topic, "home/set/heat_on/setpoint-temperature/get") == 0) {
+    } else if (strcmp(topic, TOPIC_TEMP_SETPOINT) == 0) {
         tempSetpoint = message.toFloat();
-        EEPROM.put(EEPROM_ADDR_TEMP_SETPOINT, tempSetpoint);
-        EEPROM.commit();
+        updateEEPROM(EEPROM_ADDR_TEMP_SETPOINT, tempSetpoint);
         Serial.println("Temperature Setpoint updated: " + String(tempSetpoint));
-    } else if (strcmp(topic, "home/set/boy_on/mode/nasos") == 0) {
-        if (message == "on") {
-            modeNasosBoy = true;
-        } else if (message == "off") {
-            modeNasosBoy = false;
-        }
-        EEPROM.put(EEPROM_ADDR_MODE_NASOS_BOY, modeNasosBoy);
-        EEPROM.commit();
+    } else if (strcmp(topic, TOPIC_MODE_NASOS_BOY) == 0) {
+        modeNasosBoy = (message == "on");
+        updateEEPROM(EEPROM_ADDR_MODE_NASOS_BOY, modeNasosBoy);
         Serial.println("Mode Nasos Boy updated: " + String(modeNasosBoy));
-    } else if (strcmp(topic, "home/set/heat_on/mode/nasos") == 0) {
-        if (message == "1") {
-            modeNasosHeat = true;
-        } else if (message == "0") {
-            modeNasosHeat = false;
-        }
-        EEPROM.put(EEPROM_ADDR_MODE_NASOS_HEAT, modeNasosHeat);
-        EEPROM.commit();
+    } else if (strcmp(topic, TOPIC_MODE_NASOS_HEAT) == 0) {
+        modeNasosHeat = (message == "1");
+        updateEEPROM(EEPROM_ADDR_MODE_NASOS_HEAT, modeNasosHeat);
         Serial.println("Mode Nasos Heat updated: " + String(modeNasosHeat));
-    } else if (strcmp(topic, "home/set/heat_on/setpoint-gisteresis/get") == 0) {
+    } else if (strcmp(topic, TOPIC_HYSTERESIS) == 0) {
         hysteresis = message.toFloat();
-        EEPROM.put(EEPROM_ADDR_HYSTERESIS, hysteresis);
-        EEPROM.commit();
+        updateEEPROM(EEPROM_ADDR_HYSTERESIS, hysteresis);
         Serial.println("Hysteresis updated: " + String(hysteresis));
     } else {
         Serial.println("Unknown topic received.");
     }
 }
-
-unsigned long lastTempPublishTime = 0; // Змінна для збереження часу останньої публікації
-const unsigned long tempPublishInterval = 1000; // Інтервал публікації (1 секунда)
 
 void setup() {
     // Ініціалізація серійного монітора
@@ -347,8 +364,6 @@ void setup() {
 
     // Ініціалізація EEPROM
     EEPROM.begin(EEPROM_SIZE);
-
-    // Завантаження даних з EEPROM
     EEPROM.get(EEPROM_ADDR_MODE_SET_HEAT, modeSetHeat);
     EEPROM.get(EEPROM_ADDR_TEMP_SETPOINT, tempSetpoint);
     EEPROM.get(EEPROM_ADDR_MODE_NASOS_BOY, modeNasosBoy);
@@ -367,36 +382,33 @@ void setup() {
     relay.begin();
     wifi.connect();
     mqtt.begin();
-    
     mqtt.connect();
     mqtt.subscribe("home/set/#");
     mqtt.setCallback(mqttCallback);
-    // mqtt.subscribe("home/set/heat_on/mode/set");
-    // mqtt.subscribe("home/set/heat_on/setpoint-temperature/get");
-    // mqtt.subscribe("home/set/boy_on/mode/nasos");
-    // mqtt.subscribe("home/set/heat_on/mode/nasos");
-    // mqtt.subscribe("home/set/heat_on/setpoint-gisteresis/get");
-    ArduinoOTA.setHostname("ESP_termostat"); // Задаем имя сетевого порта
+
+    // Ініціалізація OTA
+    ArduinoOTA.setHostname("ESP_termostat");
     ArduinoOTA.begin();
 }
 
 void loop() {
-    ArduinoOTA.handle(); // Всегда готовы к прошивке
-    // Перевірка, чи настав час для нового вимірювання
+    ArduinoOTA.handle();
+    wifi.reconnectIfNeeded();
+    mqtt.reconnectIfNeeded();
+
+    // Оновлення логіки
     if (tempSensor.isTimeToMeasure()) {
-        // Оновлення логіки
         logic.update(modeSetHeat, modeNasosHeat, modeNasosBoy, tempSetpoint);
     }
 
-    // Публікація поточної температури кожну секунду
-    unsigned long currentMillis = millis();
-    if (currentMillis - lastTempPublishTime >= tempPublishInterval) {
-        lastTempPublishTime = currentMillis;
+    // Публікація температури кожну секунду
+    static unsigned long lastTempPublishTime = 0;
+    if (millis() - lastTempPublishTime >= 2000) {
+        lastTempPublishTime = millis();
         float currentTemp = tempSensor.getTemperature();
         mqtt.publish(mqtt.getTempInTopic(), String(currentTemp).c_str());
         Serial.println("Published current temperature: " + String(currentTemp));
     }
 
-    // Обробка MQTT
     mqtt.loop();
 }
